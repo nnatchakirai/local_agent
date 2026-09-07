@@ -46,6 +46,7 @@ async def recommend_places(req: UserRequest):
         "너는 김해시 전문 여행 가이드 AI 에이전트야.\n"
         "제공된 관광지 데이터와 사용자의 취향을 분석해서 가장 적합한 5곳을 선정하고,\n"
         "반드시 지정된 JSON 형식으로만 답변해줘. 마크다운 기호(```json 등)나 부가 설명은 절대 하지마.\n\n"
+        "각 문장은 반드시 제공된 객관적사실 또는 주관적사실 문장의 구체적인 표현이나 키워드를 그대로 활용해서 다시 서술해야 해. 새로운 표현으로 막연하게 꾸미지 마.\n"
         "[엄격한 정량평가 규칙]:\n"
         "1. 추천 장소의 'place_id'와 'place_name'은 반드시 제공된 데이터의 값을 토대로 100% 일치하게 적어야 해.\n"
         "2. 추천 사유('recommend_reason')는 반드시 최소 2문장 이상, 최대 5문장 이하여야 해.\n"
@@ -69,11 +70,20 @@ async def recommend_places(req: UserRequest):
             model="qwen2.5:7b",
             system=system_instruction,
             prompt=user_message,
-            options={"temperature": 0.1}  # 답변의 일관성을 높이고 환각을 줄이기 위해 낮춤
+            options={"temperature": 0.1, "num_ctx": 8192}  # 답변의 일관성을 높이고 환각을 줄이기 위해 낮춤
         )
 
         reply_text = response['response'].strip()
+        print(f"[DEBUG] 원본 출력 길이: {len(reply_text)}자")
+        print(f"[DEBUG] 원본 출력 내용: {reply_text!r}")
 
+        # 코드블럭(```json ... ```)으로 감싸서 오는 경우 방어적으로 제거
+        if reply_text.startswith("```"):
+            reply_text = reply_text.strip("`")
+            if reply_text.startswith("json"):
+                reply_text = reply_text[4:].strip()
+
+        
         # AI가 대답 앞뒤에 붙인 따옴표나 불필요한 공백 제거 후 JSON으로 변환
         result_data = json.loads(reply_text)
         return result_data
