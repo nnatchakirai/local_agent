@@ -79,4 +79,4 @@ async def recommend_places(req: UserRequest):
         return result_data
 
     except Exception as e:
-        raise HTTPExcepion(status_code=500, detail=f"추론 중 오류 발생: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"추론 중 오류 발생: {str(e)}")
