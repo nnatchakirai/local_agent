@@ -1,15 +1,19 @@
+from fastapi.responses import JSONResponse
 import json
 import re
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import ollama
 
-app = FastAPI()
+class UTF8JSONResponse(JSONResponse):
+    media_type = "application/json; charset=utf-8"
 
+app = FastAPI(default_response_class=UTF8JSONResponse)
 # =========================================================
 # 기본 설정
-# =========================================================
+# ========================================= ===============
 
 TARGET_COUNT = 5        # 제출 규격상 요구되는 추천 개수
 MAX_ATTEMPTS = 3        # LLM 재요청(backfill) 최대 횟수
@@ -608,16 +612,15 @@ def call_llm(user_pref: str, context_data: str, count_needed: int, exclude_names
 # Recommendation API
 # =========================================================
 
-@app.post("/recommend")
-async def recommend_places(req: UserRequest):
+def run_recommendation_pipeline(user_pref: str) -> list[dict]:
     if df_places is None or len(df_places) == 0:
         raise HTTPException(status_code=500, detail="관광지 데이터 파일을 불러올 수 없습니다.")
 
     if len(VALID_PLACES) == 0:
         raise HTTPException(status_code=500, detail="유효한 관광지 데이터가 없습니다.")
 
-    user_pref = clean_text(req.preference)
-    if not user_pref:
+    pref = clean_text(user_pref)
+    if not pref:
         raise HTTPException(status_code=400, detail="preference를 입력해주세요.")
 
     validated_list = []
@@ -634,7 +637,7 @@ async def recommend_places(req: UserRequest):
 
         try:
             result_data = call_llm(
-                user_pref=user_pref,
+                user_pref=pref,
                 context_data=context_data,
                 count_needed=needed,
                 exclude_names=exclude_names,
@@ -654,7 +657,7 @@ async def recommend_places(req: UserRequest):
         print(f"[보충] LLM 추천 결과 {len(validated_list)}/{TARGET_COUNT}")
 
         remaining_ids = [pid for pid in VALID_PLACES if pid not in seen_ids]
-        remaining_ids = rank_places_by_preference(user_pref, remaining_ids)
+        remaining_ids = rank_places_by_preference(pref, remaining_ids)
 
         for place_id in remaining_ids:
             backfill_item = create_hard_backfill_item(place_id)
@@ -680,3 +683,80 @@ async def recommend_places(req: UserRequest):
         )
 
     return final_result[:TARGET_COUNT]
+
+
+@app.post("/recommend")
+async def recommend_places(req: UserRequest):
+    return run_recommendation_pipeline(req.preference)
+
+
+# =========================================================
+# Preference & Region State (In-Memory)
+# =========================================================
+
+DEFAULT_PREFERENCE = "김해의 대표 명소"
+latest_preference: str = ""
+
+
+def get_current_preference() -> str:
+    """메모리에 저장된 최신 preference를 반환하며, 없으면 기본값을 반환한다."""
+    return latest_preference if latest_preference else DEFAULT_PREFERENCE
+
+
+@app.post("/preference")
+async def set_preference(req: UserRequest):
+    global latest_preference
+    pref = clean_text(req.preference)
+    if not pref:
+        raise HTTPException(status_code=400, detail="preference를 입력해주세요.")
+    latest_preference = pref
+    return {
+        "message": "성공적으로 저장되었습니다.",
+        "preference": latest_preference,
+    }
+
+
+# =========================================================
+# Current Region API
+# =========================================================
+
+@app.get("/current_region")
+async def get_current_region(region_id: Optional[str] = None):
+    # region_id 누락 또는 GIMHAE가 아닌 경우
+    clean_region = clean_text(region_id)
+    if clean_region != "GIMHAE":
+        return {
+            "region_id": "GIMHAE",
+            "message": "Requested region_id was not found."
+        }
+
+    # LLM/CSV 오류 발생 시에도 서버가 죽지 않고 message 응답 반환
+    try:
+        pref = get_current_preference()
+        raw_recommendations = run_recommendation_pipeline(pref)
+
+        recommendations = [
+            {
+                "place_name": item["place_name"],
+                "place_id": item["place_id"],
+                "recommend_reason": item["recommend_reason"],
+            }
+            for item in raw_recommendations
+        ]
+
+        return {
+            "region_id": "GIMHAE",
+            "recommendations": recommendations,
+        }
+    except Exception as e:
+        error_msg = getattr(e, "detail", str(e))
+        print(f"[ERROR] /current_region 오류 발생: {error_msg}")
+        return {
+            "region_id": "GIMHAE",
+            "message": f"추천 파이프라인 처리 중 오류가 발생했습니다: {error_msg}"
+        }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
