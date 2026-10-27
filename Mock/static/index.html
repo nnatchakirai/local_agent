@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-AGENT와 함께하는 나만의 여행 (Mock)</title>
+<meta name="description" content="설문으로 취향을 분석하고 김해 맞춤 여행지와 숏츠 영상을 받아보는 Re:Local MVP 목업">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root { --g:#0f7a4a; --g2:#14935a; --gl:#e6f5ec; --bg:#eef6f1; --line:#d7e6dd; --text:#1c2b24; --muted:#6b7f74; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:'Noto Sans KR',sans-serif; color:var(--text); background:linear-gradient(160deg,#f4faf6,#e5f2ea); min-height:100vh; padding:20px 28px 70px; }
+  header { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; gap:20px; }
+  h1 { font-size:1.7rem; font-weight:900; } h1 span { color:var(--g); }
+  .sub { color:var(--g); font-weight:500; margin-top:6px; }
+  .bot { display:flex; align-items:center; gap:10px; }
+  .bot i { font-style:normal; font-size:2rem; width:56px; height:56px; display:grid; place-items:center; background:#fff; border:2px solid var(--line); border-radius:50%; }
+  .bubble { background:#fff; border:1px solid var(--line); border-radius:14px; padding:10px 14px; font-size:.85rem; color:var(--muted); max-width:260px; line-height:1.5; }
+  .online { font-size:.75rem; color:var(--g); white-space:nowrap; } .online::before { content:'● '; }
+  .grid { display:grid; grid-template-columns:1fr 1.1fr 1fr; gap:18px; align-items:start; }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:0 4px 18px rgba(15,122,74,.06); }
+  .step { display:inline-block; background:var(--g); color:#fff; font-size:.7rem; font-weight:700; padding:3px 9px; border-radius:6px; margin-right:8px; }
+  .ptitle { font-weight:700; font-size:1.05rem; } .psub { color:var(--muted); font-size:.78rem; margin:4px 0 14px; }
+  .bar { height:6px; background:var(--gl); border-radius:99px; overflow:hidden; margin-bottom:16px; } .bar i { display:block; height:100%; width:0; background:var(--g2); transition:width .3s; }
+  .q { font-weight:700; font-size:.95rem; margin-bottom:10px; }
+  .opts { display:grid; gap:8px; margin-bottom:14px; }
+  .opts button, .ghost { padding:14px 10px; border:1px solid var(--line); background:#fff; border-radius:10px; font-family:inherit; font-size:.9rem; cursor:pointer; transition:.15s; color:var(--text); }
+  .opts button:hover, .ghost:hover { border-color:var(--g); background:var(--gl); }
+  .primary { width:100%; padding:14px; border:0; border-radius:10px; background:var(--g); color:#fff; font-weight:700; font-size:.95rem; font-family:inherit; cursor:pointer; transition:.15s; }
+  .primary:hover { background:var(--g2); } .primary:disabled { background:#b7cdc1; cursor:not-allowed; }
+  .profile { margin-top:14px; text-align:center; } .profile b { font-size:.9rem; display:block; margin-bottom:10px; }
+  .tag { display:inline-block; background:var(--gl); color:var(--g); border-radius:99px; font-size:.75rem; padding:4px 10px; margin:2px; }
+  .empty { color:var(--muted); text-align:center; padding:50px 10px; font-size:.9rem; line-height:1.7; }
+  .spinner { width:34px; height:34px; border:4px solid var(--gl); border-top-color:var(--g); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 12px; }
+  #list { display:grid; gap:10px; margin-bottom:14px; }
+  .card { display:grid; grid-template-columns:78px 1fr auto; gap:12px; padding:10px; border:2px solid var(--line); border-radius:12px; cursor:pointer; transition:.15s; animation:fade .4s ease both; }
+  .card:hover { border-color:#9fd2b6; } .card.sel { border-color:var(--g); background:#f6fcf8; }
+  .thumb { width:78px; height:78px; border-radius:10px; display:grid; place-items:center; color:#fff; font-weight:900; font-size:1.6rem; }
+  .card h3 { font-size:.98rem; margin-bottom:4px; }
+  .card p { color:var(--muted); font-size:.78rem; line-height:1.45; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .badge { font-size:.7rem; padding:3px 8px; border-radius:99px; background:#f0f0f0; color:var(--muted); height:fit-content; white-space:nowrap; }
+  .badge.running { background:#fff4d6; color:#a77500; animation:pulse 1.2s infinite; } .badge.done { background:var(--gl); color:var(--g); }
+  .phone { position:relative; aspect-ratio:9/16; max-height:560px; margin:0 auto; border-radius:16px; overflow:hidden; background:#10241a; display:grid; place-items:center; color:#fff; text-align:center; }
+  .phone video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; }
+  .phone .msg { padding:20px; font-size:.9rem; line-height:1.7; opacity:.9; }
+  .caption { position:absolute; left:14px; bottom:14px; right:14px; text-align:left; font-size:.8rem; text-shadow:0 1px 4px #000; display:none; }
+  .note { margin-top:18px; font-size:.75rem; color:var(--muted); }
+  #devlog { position:fixed; left:0; right:0; bottom:0; background:rgba(16,36,26,.95); font:12px/1.6 ui-monospace,Menlo,monospace; z-index:10; }
+  #devlog summary { padding:8px 16px; cursor:pointer; color:#7ee3a8; }
+  #devlogBody { max-height:180px; overflow-y:auto; padding:0 16px 10px; color:#b8cfc2; } #devlogBody .fe { color:#8fc7ff; }
+  @keyframes fade { from{opacity:0; transform:translateY(8px);} } @keyframes pulse { 50%{opacity:.5;} } @keyframes spin { to{transform:rotate(360deg);} }
+  @media (max-width:980px) { .grid { grid-template-columns:1fr; } .bubble,.online { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>AI-AGENT와 함께하는 <span>나만의 여행</span> ✨</h1>
+    <p class="sub">설문으로 취향을 분석하고, 개인화된 여행목록과 미리 경험하는 숏츠영상을 받아보세요!</p>
+  </div>
+  <div class="bot"><div class="bubble">설문을 바탕으로 나만의 여행을 추천하고, 미리 경험할 수 있는 영상을 만들어드릴게요!</div><i>🤖</i><span class="online">AI-AGENT ONLINE</span></div>
+</header>
+
+<div class="grid">
+  <!-- STEP 1 설문 -->
+  <section class="panel">
+    <div><span class="step">STEP 1</span><span class="ptitle">나를 알려주세요</span></div>
+    <p class="psub">간단한 설문으로 당신의 여행 취향을 분석해요</p>
+    <div id="surveyBox"></div>
+    <div class="profile"><b>분석된 나의 여행 프로필</b><div id="profile"><span class="psub">설문을 시작하면 채워져요</span></div></div>
+  </section>
+
+  <!-- STEP 2 추천 -->
+  <section class="panel">
+    <div><span class="step">STEP 2</span><span class="ptitle">AI-AGENT 추천 여행지</span></div>
+    <p class="psub">당신의 취향에 맞는 BEST 여행지 리스트</p>
+    <div id="recoBox"><div class="empty">설문을 완료하면<br>추천 여행지가 나타나요</div></div>
+    <button class="primary" id="makeBtn" disabled>✨ 이 여행지로 숏츠 만들기 →</button>
+  </section>
+
+  <!-- STEP 3 영상 -->
+  <section class="panel">
+    <div><span class="step">STEP 3</span><span class="ptitle">AI가 만들어준 나만의 여행 숏츠</span></div>
+    <p class="psub">선택한 여행지로 미리 경험하는 AI 숏츠 영상</p>
+    <div class="phone">
+      <div class="msg" id="phoneMsg">추천 여행지를 선택하면<br>여기에서 영상을 볼 수 있어요</div>
+      <video id="player" controls playsinline></video>
+      <div class="caption" id="caption"></div>
+    </div>
+  </section>
+</div>
+
+<p class="note">※ Mock: ComfyUI 영상 생성은 구현 전이라 영상은 샘플이며, 단계 진행은 시간 경과로 모의됩니다. 설문 → Ollama 추천은 실제 백엔드로 동작합니다.</p>
+
+<details id="devlog" open>
+  <summary>🛠 개발 진행 로그 (현재 무슨 작업이 진행 중인지)</summary>
+  <div id="devlogBody"></div>
+</details>
+
+<script>
+const STAGE_LABEL = { queued:'대기 중', validating:'입력 확인 중', background_generation:'배경 이미지 생성 중', video_generation:'영상 생성 중', publishing:'저장 중', completed:'완료' };
+const COLORS = ['#2f8f5b','#3b7fb5','#c47f2c','#7a5bb5','#b5476b'];
+const $ = id => document.getElementById(id);
+const json = (url, body) => fetch(url, body ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) } : undefined).then(r => r.ok ? r.json() : Promise.reject(r));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+let questions = [], answers = [], places = [], selected = 0, sessionId = '', viewToken = 0;
+let tasks = {};   // place_id -> {task_id, video_url}
+
+// ---- 개발 진행 로그: 화면 동작(프론트) + 서버 진행(백엔드) ----
+let lastLogId = -1;
+function addLine(time, msg, cls) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${time}] ${cls === 'fe' ? '(화면) ' : '(서버) '}${msg}`;
+  $('devlogBody').appendChild(line);
+  $('devlogBody').scrollTop = $('devlogBody').scrollHeight;
+}
+const feLog = msg => addLine(new Date().toLocaleTimeString('ko-KR', { hour12:false }), msg, 'fe');
+setInterval(async () => {
+  try {
+    (await json(`/api/dev-log?after=${lastLogId}`)).forEach(e => { addLine(e.time, e.message, ''); lastLogId = e.id; });
+  } catch (e) { /* 서버 꺼짐 등은 무시 */ }
+}, 1000);
+
+// ---- STEP 1 설문 ----
+async function startSurvey() {
+  feLog('설문 시작 - 질문 목록을 서버에서 불러옵니다');
+  questions = await json('/api/survey/questions');
+  answers = []; tasks = {}; places = []; viewToken++;
+  $('recoBox').innerHTML = '<div class="empty">설문을 완료하면<br>추천 여행지가 나타나요</div>';
+  $('makeBtn').disabled = true;
+  resetPhone('추천 여행지를 선택하면<br>여기에서 영상을 볼 수 있어요');
+  renderProfile(); renderQuestion();
+}
+
+function renderQuestion() {
+  const i = answers.length, q = questions[i];
+  $('surveyBox').innerHTML = `<div class="bar"><i style="width:${(i / questions.length) * 100}%"></i></div>
+    <div class="psub" style="text-align:right;margin:-8px 0 8px">${i + 1} / ${questions.length}</div>
+    <div class="q">${q.question}</div><div class="opts" id="opts"></div>`;
+  q.options.forEach((text, idx) => {
+    const b = document.createElement('button');
+    b.textContent = text; b.onclick = () => answer(idx);
+    $('opts').appendChild(b);
+  });
+}
+
+function renderProfile() {
+  $('profile').innerHTML = answers.length
+    ? answers.map((a, i) => `<span class="tag">#${questions[i].options[a]}</span>`).join('')
+    : '<span class="psub">설문을 시작하면 채워져요</span>';
+}
+
+async function answer(idx) {
+  feLog(`${answers.length + 1}번 문항 응답: "${questions[answers.length].options[idx]}"`);
+  answers.push(idx); renderProfile();
+  if (answers.length < questions.length) return renderQuestion();
+
+  feLog('모든 문항 완료 - 서버에 설문 결과 전송, Ollama 추천 결과를 기다립니다');
+  $('surveyBox').innerHTML = '<div class="empty">설문을 완료했어요!<br>취향을 분석해 추천하는 중...</div>';
+  $('recoBox').innerHTML = '<div class="empty"><div class="spinner"></div>AI가 김해 명소를 고르는 중입니다<br>(Ollama 추천 중)</div>';
+  try {
+    const res = await json('/api/survey', { answers });
+    sessionId = res.session_id; places = res.recommendations;
+    tasks[places[0].place_id] = { task_id: res.task_id };   // 1순위는 서버가 미리 생성 시작
+    feLog(`추천 ${places.length}곳 수신 - 카드 목록을 표시합니다`);
+    $('surveyBox').innerHTML = '<div class="empty">설문을 완료했어요!<br>딱 맞는 여행지를 추천해드렸어요 😍</div><button class="ghost" style="width:100%" id="restart">설문 다시 하기</button>';
+    $('restart').onclick = startSurvey;
+    selected = 0; renderList(); showVideo(places[0]);
+  } catch (e) {
+    alert('추천 생성에 실패했습니다. 서버/Ollama 상태를 확인해주세요.');
+    startSurvey();
+  }
+}
+
+// ---- STEP 2 추천 ----
+function renderList() {
+  $('recoBox').innerHTML = '<div id="list"></div>';
+  places.forEach((p, i) => {
+    const t = tasks[p.place_id];
+    const state = !t ? ['', ''] : t.video_url ? ['영상 준비됨', 'done'] : ['생성 중', 'running'];
+    const el = document.createElement('div');
+    el.className = 'card' + (i === selected ? ' sel' : '');
+    el.style.animationDelay = `${i * 0.1}s`;
+    el.innerHTML = `<div class="thumb" style="background:linear-gradient(135deg,${COLORS[i % 5]},#0f3d28)">${i + 1}</div>
+      <div><h3>${p.place_name}</h3><p>${p.recommend_reason}</p></div>${state[0] ? `<span class="badge ${state[1]}">${state[0]}</span>` : ''}`;
+    el.onclick = () => { selected = i; feLog(`'${p.place_name}' 카드 선택`); renderList(); if (tasks[p.place_id]) showVideo(p); };
+    $('list').appendChild(el);
+  });
+  $('makeBtn').disabled = false;
+}
+
+$('makeBtn').onclick = () => showVideo(places[selected]);
+
+// ---- STEP 3 영상 ----
+function resetPhone(msg) {
+  const player = $('player'); player.pause(); player.style.display = 'none'; $('caption').style.display = 'none';
+  $('phoneMsg').style.display = 'block'; $('phoneMsg').innerHTML = msg;
+}
+
+async function showVideo(p) {
+  const token = ++viewToken;   // 다른 장소를 선택하면 이전 폴링은 중단 (서버 작업은 계속)
+  resetPhone(`<div class="spinner"></div>${p.place_name} 영상 준비 중...`);
+  let t = tasks[p.place_id];
+  if (!t) {
+    const res = await json('/api/videos', { place_id: p.place_id, session_id: sessionId });
+    t = tasks[p.place_id] = { task_id: res.task_id };
+    renderList();
+  }
+  while (!t.video_url) {
+    const s = await json(`/api/video-status/${t.task_id}`);
+    if (s.status === 'succeeded') { t.video_url = s.result.video_url; break; }
+    if (token !== viewToken) return;
+    $('phoneMsg').innerHTML = `<div class="spinner"></div>${p.place_name}<br>${STAGE_LABEL[s.stage] || s.stage}...`;
+    await sleep(2000);
+  }
+  renderList();
+  if (token !== viewToken) return;
+  feLog(`'${p.place_name}' 영상 재생`);
+  $('phoneMsg').style.display = 'none';
+  const player = $('player'); player.src = t.video_url; player.style.display = 'block'; player.play().catch(() => {});
+  $('caption').style.display = 'block';
+  $('caption').innerHTML = `<b>${p.place_name}</b><br>#${p.place_name.replace(/\s/g, '')} #AI여행숏츠`;
+}
+
+startSurvey();
+</script>
+</body>
+</html>
