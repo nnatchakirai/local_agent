@@ -3,6 +3,7 @@ import json
 import re
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import ollama
@@ -11,6 +12,15 @@ class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
 app = FastAPI(default_response_class=UTF8JSONResponse)
+
+# 전시/실감콘텐츠 및 타 시스템 웹 프론트엔드 연계를 위한 CORS 허용
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # =========================================================
 # 기본 설정
 # ========================================= ===============
@@ -691,16 +701,34 @@ async def recommend_places(req: UserRequest):
 
 
 # =========================================================
-# Preference & Region State (In-Memory)
+# Preference & Region State (In-Memory & Cache)
 # =========================================================
 
 DEFAULT_PREFERENCE = "김해의 대표 명소"
 latest_preference: str = ""
+cached_recommendations: list[dict] = []
+cached_preference: str = ""
 
 
 def get_current_preference() -> str:
     """메모리에 저장된 최신 preference를 반환하며, 없으면 기본값을 반환한다."""
     return latest_preference if latest_preference else DEFAULT_PREFERENCE
+
+
+def update_recommendation_cache(pref: str) -> list[dict]:
+    """추천 파이프라인을 실행하고 결과를 캐시에 저장한다."""
+    global cached_recommendations, cached_preference
+    raw_recommendations = run_recommendation_pipeline(pref)
+    cached_recommendations = [
+        {
+            "place_name": item["place_name"],
+            "place_id": item["place_id"],
+            "recommend_reason": item["recommend_reason"],
+        }
+        for item in raw_recommendations
+    ]
+    cached_preference = pref
+    return cached_recommendations
 
 
 @app.post("/preference")
@@ -710,6 +738,13 @@ async def set_preference(req: UserRequest):
     if not pref:
         raise HTTPException(status_code=400, detail="preference를 입력해주세요.")
     latest_preference = pref
+
+    # 취향 등록 시 즉시 캐시 갱신 (전시 연계 시 /current_region의 0초 즉각 응답 보장)
+    try:
+        update_recommendation_cache(latest_preference)
+    except Exception as e:
+        print(f"[WARN] 취향 변경 시 캐시 갱신 실패 (조회 시 재시도됨): {e}")
+
     return {
         "message": "성공적으로 저장되었습니다.",
         "preference": latest_preference,
@@ -722,33 +757,38 @@ async def set_preference(req: UserRequest):
 
 @app.get("/current_region")
 async def get_current_region(region_id: Optional[str] = None):
-    # region_id 누락 또는 GIMHAE가 아닌 경우
+    # region_id 누락 또는 GIMHAE가 아닌 경우 (대소문자 무시 지원)
     clean_region = clean_text(region_id)
-    if clean_region != "GIMHAE":
+    if clean_region.upper() != "GIMHAE":
         return {
             "region_id": "GIMHAE",
             "message": "Requested region_id was not found."
         }
 
-    # LLM/CSV 오류 발생 시에도 서버가 죽지 않고 message 응답 반환
+    # 캐시된 결과가 있으면 즉시 반환하여 전시 부스 HTTP 타임아웃 방지
     try:
         pref = get_current_preference()
-        raw_recommendations = run_recommendation_pipeline(pref)
-
-        recommendations = [
-            {
-                "place_name": item["place_name"],
-                "place_id": item["place_id"],
-                "recommend_reason": item["recommend_reason"],
+        global cached_recommendations, cached_preference
+        if cached_recommendations and cached_preference == pref:
+            return {
+                "region_id": "GIMHAE",
+                "recommendations": cached_recommendations,
             }
-            for item in raw_recommendations
-        ]
 
+        recommendations = update_recommendation_cache(pref)
         return {
             "region_id": "GIMHAE",
             "recommendations": recommendations,
         }
     except Exception as e:
+        # LLM/파이프라인 오류 발생 시 기존 캐시가 있다면 폴백 반환
+        if cached_recommendations:
+            print(f"[WARN] 파이프라인 처리 중 오류가 발생하여 기존 캐시 결과를 반환합니다: {e}")
+            return {
+                "region_id": "GIMHAE",
+                "recommendations": cached_recommendations,
+            }
+
         error_msg = getattr(e, "detail", str(e))
         print(f"[ERROR] /current_region 오류 발생: {error_msg}")
         return {
@@ -759,4 +799,5 @@ async def get_current_region(region_id: Optional[str] = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    # 명세서 필수 요구사항: 0.0.0.0:5000 바인드
+    uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True)
