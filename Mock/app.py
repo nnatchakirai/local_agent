@@ -54,7 +54,7 @@ async def log_api_call(request, call_next):
 
 # =========================================================
 # 기본 설정
-# ========================================= ===============
+# =========================================================
 
 TARGET_COUNT = 5        # 제출 규격상 요구되는 추천 개수
 MAX_ATTEMPTS = 3        # LLM 재요청(backfill) 최대 횟수
@@ -650,6 +650,41 @@ def call_llm(user_pref: str, context_data: str, count_needed: int, exclude_names
     return extract_json_array(response.get("response", ""))
 
 
+# ---------------------------------------------------------
+# [현장 전환용] OpenAI API 버전 (현재는 주석 처리 - 개발 중에는 Ollama 사용)
+#
+# 전환 방법:
+#   1) requirements.txt 의 ollama 를 openai 로 교체하고, 이 파일 상단의 `import ollama` 를
+#      `from openai import OpenAI` 로 바꾼다.
+#   2) 환경변수 OPENAI_API_KEY 를 설정한다. (키를 코드에 직접 쓰지 않는다)
+#   3) 위의 call_llm 에서 `response = ollama.generate(...)` 부터 `return ...` 까지를
+#      아래 블록으로 교체한다. system_instruction / user_message 는 그대로 재사용한다.
+#
+# 참고:
+#   - 프롬프트가 "JSON 배열"을 요구하므로 response_format(JSON 모드, 객체만 허용)은 쓰지 않는다.
+#     모델이 코드펜스를 붙여도 extract_json_array 가 처리한다.
+#   - timeout 은 전시 서버의 HTTP 타임아웃 안에서 폴백(하드 백필)으로 넘어가도록 짧게 둔다.
+#     max_retries=0 으로 SDK 자체 재시도를 끄고, 재시도는 run_recommendation_pipeline 의
+#     MAX_ATTEMPTS 루프가 담당한다.
+#   - 모델명(OPENAI_MODEL)은 현장 확정 후 지정한다. (아래 값은 임시 예시)
+#
+# OPENAI_MODEL = "gpt-4o-mini"
+# OPENAI_TIMEOUT_SEC = 20
+# openai_client = OpenAI(timeout=OPENAI_TIMEOUT_SEC, max_retries=0)   # 키는 OPENAI_API_KEY 에서 읽는다
+#
+#     response = openai_client.chat.completions.create(
+#         model=OPENAI_MODEL,
+#         messages=[
+#             {"role": "system", "content": system_instruction},
+#             {"role": "user", "content": user_message},
+#         ],
+#         temperature=0.1,
+#     )
+#
+#     return extract_json_array(response.choices[0].message.content or "")
+# ---------------------------------------------------------
+
+
 # =========================================================
 # Recommendation API
 # =========================================================
@@ -781,7 +816,7 @@ async def set_preference(req: UserRequest):
 
     # 취향 등록 시 즉시 캐시 갱신 (전시 연계 시 /current_region의 0초 즉각 응답 보장)
     try:
-        update_recommendation_cache(latest_preference)
+        await run_in_threadpool(update_recommendation_cache, latest_preference)
     except Exception as e:
         print(f"[WARN] 취향 변경 시 캐시 갱신 실패 (조회 시 재시도됨): {e}")
 
@@ -808,14 +843,13 @@ async def get_current_region(region_id: Optional[str] = None):
     # 캐시된 결과가 있으면 즉시 반환하여 전시 부스 HTTP 타임아웃 방지
     try:
         pref = get_current_preference()
-        global cached_recommendations, cached_preference
         if cached_recommendations and cached_preference == pref:
             return {
                 "region_id": "GIMHAE",
                 "recommendations": cached_recommendations,
             }
 
-        recommendations = update_recommendation_cache(pref)
+        recommendations = await run_in_threadpool(update_recommendation_cache, pref)
         return {
             "region_id": "GIMHAE",
             "recommendations": recommendations,
@@ -875,8 +909,10 @@ async def get_survey_questions():
 @app.post("/api/survey")
 async def submit_survey(req: SurveyRequest):
     global latest_preference
-    if len(req.answers) != len(SURVEY_QUESTIONS) or any(a not in (0, 1) for a in req.answers):
+    if len(req.answers) != len(SURVEY_QUESTIONS):
         raise HTTPException(status_code=400, detail="모든 문항에 답해주세요.")
+    if any(isinstance(a, bool) or a not in (0, 1) for a in req.answers):
+        raise HTTPException(status_code=400, detail="선택지 값은 0 또는 1이어야 합니다.")
 
     # 선택 키워드 -> 하나의 취향 문장
     phrases = [q["phrases"][a] for q, a in zip(SURVEY_QUESTIONS, req.answers)]
@@ -885,7 +921,13 @@ async def submit_survey(req: SurveyRequest):
     dev_log(f"설문 응답 수신: 선택 {req.answers} → " + " / ".join(f"{q['question']} {q['options'][a]}" for q, a in zip(SURVEY_QUESTIONS, req.answers)))
     dev_log(f"선택을 취향 문장으로 조합: {preference}")
     latest_preference = preference   # /current_region(전시 서버 연계)에도 반영
-    recommendations = await run_in_threadpool(update_recommendation_cache, preference)
+    try:
+        recommendations = await run_in_threadpool(update_recommendation_cache, preference)
+    except HTTPException:
+        raise
+    except Exception as e:
+        dev_log(f"설문 추천 생성 실패: {e}")
+        raise HTTPException(status_code=503, detail="추천 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
     # 1순위 장소 영상 모의 작업을 미리 등록 (사용자가 카드를 읽는 동안 생성)
     session_id = uuid.uuid4().hex[:8]
